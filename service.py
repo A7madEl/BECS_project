@@ -1,16 +1,27 @@
 # file: service.py
-import re
+import re, json
 from typing import Tuple, List, Dict
 from db import DB
-from constants import BLOOD_TYPES, COMPATIBILITY, POPULATION_PERCENT, parse_ddmmyyyy_or_iso
+from constants import BLOOD_TYPES, COMPATIBILITY, POPULATION_PERCENT, parse_ddmmyyyy_or_iso, iso_now
 
 class Service:
-    def __init__(self, db: DB):
+    def __init__(self, db: DB, actor: str = "operator"):
         self.db = db
+        self.actor = actor  # אפשר בעתיד לחבר למסך לוגין
 
     @staticmethod
     def valid_id9(s: str) -> bool:
         return bool(re.fullmatch(r"\d{9}", (s or "").strip()))
+
+    def audit(self, action: str, entity: str, entity_id: str | None, details: dict):
+        self.db.add_audit(
+            ts=iso_now(),
+            actor=self.actor,
+            action=action,
+            entity=entity,
+            entity_id=entity_id,
+            details_json=json.dumps(details, ensure_ascii=False)
+        )
 
     # ----- Intake -----
     def intake(self, donor_id: str, donor_name: str, blood_type: str, date_str: str):
@@ -18,26 +29,27 @@ class Service:
             raise ValueError("סוג דם לא חוקי")
         if not self.valid_id9(donor_id):
             raise ValueError('ת"ז חייבת להיות 9 ספרות')
-        self.db.add_donation(donor_id.strip(), donor_name.strip(), blood_type, parse_ddmmyyyy_or_iso(date_str))
+        donation_iso = parse_ddmmyyyy_or_iso(date_str)
+        new_id = self.db.add_donation(donor_id.strip(), donor_name.strip(), blood_type, donation_iso)
+        # audit
+        self.audit("INTAKE", "donations", str(new_id), {
+            "donor_id": donor_id, "donor_name": donor_name,
+            "blood_type": blood_type, "donation_date": donation_iso
+        })
 
     # ----- Routine recommendation (no execution) -----
     def plan_routine_recommendation(self, recipient_type: str, quantity: int
                                     ) -> Tuple[List[Dict], bool, int]:
-        """
-        מחזיר תכנית ניפוק מומלצת (בלי לבצע):
-          plan: list of dicts [{donor, available, take}], issued_can_fulfill: bool, missing: int
-        עקרונות: התאמה מלאה תחילה → חלופות תואמות לפי זמינות (יורד) ואז נדירות (פחות נדיר קודם).
-        """
         need = int(quantity)
         plan = []
 
-        # 1) סוג מבוקש (תמיד תואם לעצמו)
+        # 1) requested type
         avail_req = self.db.count_available(recipient_type)
         take_req = min(avail_req, need)
         plan.append({"donor": recipient_type, "available": avail_req, "take": take_req})
         need -= take_req
 
-        # 2) חלופות (אם עדיין חסר)
+        # 2) alternatives
         if need > 0:
             compatible = [d for d in BLOOD_TYPES if recipient_type in COMPATIBILITY[d] and d != recipient_type]
             donors_sorted = sorted(
@@ -55,6 +67,13 @@ class Service:
 
         can_fulfill = (need == 0)
         missing = max(0, need)
+
+        # audit (אופציונלי אך מומלץ)
+        self.audit("PLAN_ROUTINE", "dispensations", None, {
+            "recipient": recipient_type, "requested_qty": quantity,
+            "can_fulfill": can_fulfill, "missing": missing, "plan": plan
+        })
+
         return plan, can_fulfill, missing
 
     # ----- Apply plan (execute) -----
@@ -70,6 +89,9 @@ class Service:
             if taken > 0:
                 self.db.log_dispensation(donor, taken, mode=mode)
                 total_issued += taken
+                # audit per donor-type taken
+                self.audit("ISSUE_ROUTINE" if mode == "routine" else "ISSUE_EMERGENCY",
+                           "dispensations", None, {"donor_type": donor, "taken": taken, "mode": mode})
         return total_issued
 
     # ----- Emergency O- all -----
@@ -81,4 +103,6 @@ class Service:
         taken = self.db.mark_dispensed_ids(ids, mode="emergency")
         if taken > 0:
             self.db.log_dispensation('O-', taken, mode="emergency")
+            # audit
+            self.audit("ISSUE_EMERGENCY", "dispensations", None, {"donor_type": "O-", "taken": taken})
         return taken

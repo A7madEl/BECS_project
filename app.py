@@ -1,19 +1,20 @@
 # file: app.py
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, filedialog
 
 from constants import BLOOD_TYPES, POPULATION_PERCENT
 from db import DB
 from service import Service
 from style import apply_theme
+from export import to_csv, to_json
 
 class App(ttk.Frame):
     def __init__(self, master, service: Service, theme_mode: str = "dark"):
         super().__init__(master)
         self.service = service
         self.master.title("BECS — מערכת בנק דם (Tkinter/ttk)")
-        self.master.geometry("1040x700")
-        self.master.minsize(980, 640)
+        self.master.geometry("1120x740")
+        self.master.minsize(1024, 680)
 
         # עיצוב
         self.palette = apply_theme(self.master, mode=theme_mode)
@@ -33,16 +34,19 @@ class App(ttk.Frame):
         self.tab_routine = ttk.Frame(nb, padding=10)
         self.tab_emergency = ttk.Frame(nb, padding=10)
         self.tab_stock = ttk.Frame(nb, padding=10)
+        self.tab_export = ttk.Frame(nb, padding=10)
 
         nb.add(self.tab_intake, text="קליטת תרומות")
         nb.add(self.tab_routine, text="ניפוק שגרה")
         nb.add(self.tab_emergency, text="ניפוק חירום (אר\"ן)")
         nb.add(self.tab_stock, text="מצב מלאי")
+        nb.add(self.tab_export, text="ייצוא ודוחות")
 
         self._build_intake_tab()
         self._build_routine_tab()
         self._build_emergency_tab()
         self._build_stock_tab()
+        self._build_export_tab()
 
     # ---------- Intake ----------
     def _build_intake_tab(self):
@@ -258,6 +262,79 @@ class App(ttk.Frame):
             pop = POPULATION_PERCENT[bt]
             tag = "ok" if cnt >= 10 else ("low" if cnt > 0 else "empty")
             self.tree_stock.insert("", "end", values=(bt, cnt, f"{pop}%"), tags=(tag,))
+
+    # ---------- Export ----------
+    def _build_export_tab(self):
+        wrap = ttk.Labelframe(self.tab_export, text="ייצוא נתונים (Copies of Records)", style="Card.TLabelframe")
+        wrap.pack(fill="x")
+
+        ttk.Button(wrap, text="Export Donations (CSV)", style="Accent.TButton",
+                   command=self._export_donations_csv).grid(row=0, column=0, padx=8, pady=8, sticky="w")
+        ttk.Button(wrap, text="Export Dispensations (CSV)", style="Accent.TButton",
+                   command=self._export_dispensations_csv).grid(row=0, column=1, padx=8, pady=8, sticky="w")
+        ttk.Button(wrap, text="Export Audit Log (CSV)", style="Accent.TButton",
+                   command=self._export_audit_csv).grid(row=0, column=2, padx=8, pady=8, sticky="w")
+
+        ttk.Button(wrap, text="Export Donations (JSON)", command=self._export_donations_json)\
+            .grid(row=1, column=0, padx=8, pady=8, sticky="w")
+        ttk.Button(wrap, text="Export Dispensations (JSON)", command=self._export_dispensations_json)\
+            .grid(row=1, column=1, padx=8, pady=8, sticky="w")
+        ttk.Button(wrap, text="Export Audit Log (JSON)", command=self._export_audit_json)\
+            .grid(row=1, column=2, padx=8, pady=8, sticky="w")
+
+        info = ttk.Label(self.tab_export,
+                         text="ייצוא לפורמטים נפוצים (CSV/JSON) עומד בדרישת Copies of Records של Part 11.",
+                         wraplength=900)
+        info.pack(anchor="w", padx=4, pady=(10, 0))
+
+    # --- export handlers ---
+    def _export_donations_csv(self):
+        rows = service.db.export_donations()
+        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
+                                            initialfile="donations.csv")
+        if path:
+            to_csv(path, rows)
+            messagebox.showinfo("Export", f"Donations exported to:\n{path}")
+
+    def _export_dispensations_csv(self):
+        rows = service.db.export_dispensations()
+        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
+                                            initialfile="dispensations.csv")
+        if path:
+            to_csv(path, rows)
+            messagebox.showinfo("Export", f"Dispensations exported to:\n{path}")
+
+    def _export_audit_csv(self):
+        rows = service.db.export_audit()
+        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
+                                            initialfile="audit_log.csv")
+        if path:
+            to_csv(path, rows)
+            messagebox.showinfo("Export", f"Audit log exported to:\n{path}")
+
+    def _export_donations_json(self):
+        rows = service.db.export_donations()
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")],
+                                            initialfile="donations.json")
+        if path:
+            to_json(path, rows)
+            messagebox.showinfo("Export", f"Donations exported to:\n{path}")
+
+    def _export_dispensations_json(self):
+        rows = service.db.export_dispensations()
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")],
+                                            initialfile="dispensations.json")
+        if path:
+            to_json(path, rows)
+            messagebox.showinfo("Export", f"Dispensations exported to:\n{path}")
+
+    def _export_audit_json(self):
+        rows = service.db.export_audit()
+        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")],
+                                            initialfile="audit_log.json")
+        if path:
+            to_json(path, rows)
+            messagebox.showinfo("Export", f"Audit log exported to:\n{path}")
 
 if __name__ == "__main__":
     db = DB()
